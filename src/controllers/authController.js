@@ -1,4 +1,4 @@
-// src/controllers/authController.js
+// src/controllers/authController.js (Fixed)
 import prisma from '../config/db.js';
 import { hashPassword, comparePassword, generateToken } from '../utils/authUtils.js';
 
@@ -12,7 +12,9 @@ export const registerUser = async (req, res) => {
     return res.status(400).json({ message: 'Please provide name, email, password, and role' });
   }
 
-  if (role && !['ADMIN', 'CLIENT'].includes(role.toUpperCase())) {
+  // Validate role format
+  const normalizedRole = role.toUpperCase();
+  if (!['ADMIN', 'CLIENT'].includes(normalizedRole)) {
     return res.status(400).json({ message: 'Invalid role. Must be ADMIN or CLIENT.' });
   }
 
@@ -29,23 +31,20 @@ export const registerUser = async (req, res) => {
         name,
         email,
         password: hashedPassword,
-        role: role.toUpperCase(), // Ensure role is stored in uppercase
+        role: normalizedRole,
       },
+      select: { id: true, name: true, email: true, role: true } // Exclude password from response
     });
 
-    if (user) {
-      res.status(201).json({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        token: generateToken(user.id, user.role),
-      });
-    } else {
-      res.status(400).json({ message: 'Invalid user data' });
-    }
+    res.status(201).json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      token: generateToken(user.id, user.role),
+    });
   } catch (error) {
-    console.error(error);
+    console.error('Registration error:', error);
     res.status(500).json({ message: 'Server error during registration' });
   }
 };
@@ -63,19 +62,24 @@ export const loginUser = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { email } });
 
-    if (user && (await comparePassword(password, user.password))) {
-      res.json({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        token: generateToken(user.id, user.role),
-      });
-    } else {
-      res.status(401).json({ message: 'Invalid email or password' });
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid email or password' });
     }
+
+    const passwordMatch = await comparePassword(password, user.password);
+    if (!passwordMatch) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    res.json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      token: generateToken(user.id, user.role),
+    });
   } catch (error) {
-    console.error(error);
+    console.error('Login error:', error);
     res.status(500).json({ message: 'Server error during login' });
   }
 };
@@ -84,10 +88,19 @@ export const loginUser = async (req, res) => {
 // @route   GET /api/auth/me
 // @access  Private
 export const getMe = async (req, res) => {
-  // req.user is set by the protect middleware
-  if (req.user) {
-    res.json(req.user);
-  } else {
-    res.status(404).json({ message: 'User not found' });
+  try {
+    const user = await prisma.user.findUnique({ 
+      where: { id: req.user.id },
+      select: { id: true, name: true, email: true, role: true, createdAt: true, updatedAt: true }
+    });
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    res.json(user);
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ message: 'Server error fetching user profile' });
   }
 };
